@@ -1,0 +1,435 @@
+---
+title: "Derived allele frequency in Human and Macaque brain promoters"
+author: "Yiru GONG"
+date: "2020/8/16"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(ggplot2)
+library(knitr)
+```
+
+# Overview
+
+***Aim:*** To analyze the evolution tendency of promoters in different brain regions in human and macaque.
+***Method:*** Compare and analyze the SNP derived allele frequency of promoters between conserved and divergent category, calculate the odds ratio.
+
+***Original Data:*** 
+
+1) Biased promoter expression in 15 brain regions of Human and Macaque
+```{bash eval=FALSE}
+  $ cd /exports/cmvm/datastore/sbms/groups/young-lab/macaque/data/
+  $ ls hg19.*.outcomes.bed.gz rheMac3.*.outcomes.bed.gz
+```
+2) Overall human promoter expression aligned with macaque promoter
+```{bash eval=FALSE}
+  $ /exports/cmvm/datastore/sbms/groups/young-lab/macaque/data/hg19_expression_outcomes.bed.gz
+```
+3) Human SNP alleles data
+```{bash eval=FALSE}
+  $ /exports/cmvm/datastore/sbms/groups/young-lab/human/hg19.decode.snpResolved.bed.gz
+```
+
+***Codes:***
+```{bash eval=FALSE}
+  $ cd /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/
+```
+Files:
+
+- *brain_region.R* ----- Promoter alignment annotation & whole brain file generation
+- *count.sh* & *window_count.sh* ----- Codes to intersecting SNP with promoter file or window version respectively
+- *subset.sh* ----- dividing count files into matched and divergent subsets
+- *window.sh* ----- Codes to apply *bedtools window* directly
+- *odds_ratio.R* ----- Odds ratio calculation
+
+***Output data:*** all files stored in the direction:
+```{bash eval=FALSE}
+  $ cd /exports/cmvm/datastore/sbms/groups/young-lab/yiru/data/
+```
+
+File types:
+
+- *"hg19."* ----- Human promoter file
+- *"rheMac3."* ----- Macaque promoter file
+- *".expression.txt"* ----- Annotated brain region biased promoters
+- *".expression.window.txt"* ----- Expanded promoter location based on "*.expression.txt"
+- *".counts.txt"* ----- Intersect of SNP alleles and promoter expression
+- *".counts.window.txt"* ----- Intersect of SNP alleles and expanded promoter expression
+- *".matched.counts.window.txt"* & *".divergent.counts.window.txt"* ----- Intersect files of two subsets of promoters
+- *"hg19.OR...Rdata"* ----- Odds ratio results of all brain regions
+
+# I. Human-Macaque promoter alignment annotation
+**Code:**
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/brain_region.R
+```
+
+**Subsets:**
+
+1. **"Brain_expression" column:** To observe the biased expression of human and macaque promoter among different regions, the promoters in every brain region are annotated with two categories under the "Brain_expression" column:
+- ***"region_specific":*** The promoter is biased in only one brain region in the species (human or macaque)
+- ***"non_specific":*** The promoter is biased in multiple brain regions in the species (human or macaque)
+
+2. **"Macaque" Column:** To discover the conservation of human promoters in different brain regions through evolution, human promoters in every brain region are annotated with three categories under the "Macaque" column.
+
+- ***"matched":*** The human promoter has ortholog macaque promoters in the same brain region
+- ***"divergent":*** The human promoter has ortholog macaque promoters, but not expressed in the same brain region
+- ***"unconserved":*** The human promoter without ortholog macaque promoters in the brain
+
+**Extra Information:**
+
+1. **"Macaque_Id" Column:** For all "matched" and "divergent" promoters, the corresponding promoters expressed in the brain of the other species (a direct copy from *"hg19_expression_outcomes.bed.gz" Macaque_Id column*).
+
+2. **"matched_Id" Column:** Only for "matched" promoters, the corresponding macaque promoters expressed in the same region.
+
+The Macaque files are annotated with the same criteria.
+
+**Output:**
+
+Finally, we get 15 files of annotated region-biased promoters for each species. 
+```{bash eval=FALSE}
+$ vi *.expression.txt
+### Eg. hg19.amygdala.expression.txt
+```
+
+Each file contains 10 columns:
+
+- *chr* - promoter location of chromosome
+- *start* - starting locus of the promoter
+- *end* - ending locus of the promoter
+- *Id* - promoter Id
+- *TPM* - Transcripts PerKilobase Million
+- *Strand* - Strand of the sequence
+- *Brain_expression* - annotation with two category "region_specific/non_specific"
+- *Macaque* - promoter alignment annotation with three category "matched/divergent/unconserved"
+- *Macaque_Id* - corresponding macaque Ids expressed in the brain
+- *matched_Id* - corresponding macaque Ids expressed in the same region
+
+# II. Generate overall human brain promoter expression file
+
+**Code:**
+Included in the previous annotation code.
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/brain_region.R
+```
+
+**Output File: **
+
+*1. hg19.all_brain.expression.txt*
+
+  To compare the promoter expression between specific brain regions and overall brain expression, we put human promoters in all brain regions together and delete the repeated promoters. Every promoter is annotated in three categories:
+
+- ***"matched":*** The promoter is ortholog to some macaque promoters in AT LEAST ONE same region
+- ***"divergent":*** The promoter is ortholog to some macaque brain promoters but NONE is expressed in the same region
+- ***"unconserved":***  The human promoter without ortholog macaque promoters
+
+*2. hg19.all_brain_downsampled.expression.txt*
+
+  To keep the similar statistical power, average number of promoters in each region is calculated and the same number of promoters are randomly selected from the *all_brain* file. 5 repeats are generated in the subdirectory:
+```{bash eval=F}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/data/subsampled/
+```
+
+
+
+
+# III. SNP allele intersection
+
+To compare the allele frequency change of promoters in all brain regions, we intersect the human SNP expression with the promoter expression using **bedtools intersect** command.
+
+**Code:**
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/count.sh
+
+# Example.
+$ module load igmm/apps/BEDTools/2.25.0
+$ bedtools intersect -a hg19.decode.snpResolved.bed.gz -b 
+  hg19.brain_general.expression.txt -wb -sorted > hg19.brain_general.counts.txt
+```
+
+**Output:**
+```{bash eval=FALSE}
+# suffix "*.counts.txt"
+$ ls *.counts.txt
+```
+
+## Calculate Odds ratio of derived allele frequency
+
+**Code:**
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/odds_ratio.R
+```
+
+
+We first count the overall common alleles (derived allele frequency **>5%**) and rare alleles (derived allele frequency **<1.5%**) of all SNP (*"hg19.decode.snpResolved.bed.gz"*).
+```{bash eval=FALSE}
+$ zcat hg19.decode.snpResolved.bed.gz | awk '{print $9}' | awk '$1<0.015{print}' | wc -l
+```
+```{r}
+rare_genome    = 12205724
+common_genome  = 5263405
+```
+
+
+For each counts file, we count the number of common and rare alleles, and perform Fisher exact test to calculate the odds ratio, P-value and confidential interval.
+$$
+\begin{array}{|l|l|l|}
+\hline
+& Region & Genome \\ 
+\hline 
+rare & & 12205724 \\
+\hline 
+common & & 5263405 \\
+\hline
+\end{array}
+$$
+$$
+Odds.Ratio = \frac{rare.region/common.region}{rare.genome/common.genome}
+$$
+
+**Result:**
+
+```{r}
+load('C:/Users/lenovo/Desktop/Young lab/data/hg19.OR.Rdata')
+```
+```{r echo=F}
+result = result[-c(3,4),]
+
+kable(result[,1:5])
+kable(result[,c(1,seq(6,9,1))])
+```
+
+**Plot:**
+
+```{r echo=FALSE}
+idx = which(result$p.value<0.05)
+
+ggplot(result,aes(brain_region,odds_ratio,ymin=lower_conf,ymax=upper_conf,color=region))+
+  geom_pointrange(shape='|',size=0.8)+  #,color='black')+
+  geom_hline(yintercept = 1,linetype=2,color='lightblue')+
+  geom_vline(xintercept = 2.5,linetype=1,color='grey')+
+  annotate('text',x=idx-0.05,y=result$upper_conf[idx]+0.25,label='*')+
+  theme_classic()+
+  scale_y_continuous(breaks=seq(0,4,0.5))+
+  scale_color_manual(values=c('blue','black'))+
+  theme(legend.position = 'none')+
+  labs(x=NULL,y='Derived allele frequency\n odds ratio')+
+  coord_flip()
+```
+
+**Interpret:**
+
+As the result indicated, the odds ratio of the whole brain is significantly larger than 1, showing a tendency of more rare alleles, which represent a purifying selection in brain evolution. But the downsampled one do not reach the significant level. Some brain regions (**parietal gyrus, occipital cortex** and **cerebellum**) also showed significant odds ratio, while others didn't.
+
+# IV. Window intersection
+
+Since the nearby region of the promoter sequence may also affect the function of the promoter, we additionally perform *bedtools window* to expand the intersecting region. In specific, 150 bp is added to the upstream of promoter location and 50 bp to the downstream. 
+
+**Code:** (regardless of storage problem)
+
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/window.sh
+
+# For example:
+$ bedtools window -l 150 -r 50 -sw -u -a hg19.amygdala.expression.txt -b 
+  hg19.decode.snpResolved.bed.gz > hg19.amygdala.counts.window.txt
+```
+
+Due to the storage limitation, we perform the addition manually in *R* and then run *bedtools intersect* as the above method.
+
+```{r eval=FALSE}
+filepath <- '/mnt/nfsstaging/cmvm/datastore/sbms/groups/young-lab/yiru/data'
+filenames <- list.files(filepath,pattern='hg19.*.expression.txt$')
+
+for (idx in 1:length(filenames)){
+  data = read.table(filenames[idx],stringsAsFactors = F,header=T)
+  data[which(data$Strand=='+'),2] = data[which(data$Strand=='+'),2]-150
+  data[which(data$Strand=='+'),3] = data[which(data$Strand=='+'),3]+50
+  data[which(data$Strand=='-'),2] = data[which(data$Strand=='-'),2]-50
+  data[which(data$Strand=='-'),3] = data[which(data$Strand=='-'),3]+150
+  
+  data = data[order(data[,1],data[,2],data[,3]),]
+  name = gsub('expression','expression.window',filenames[idx])
+  write.table(data,name,row.names = F,quote=F, sep='\t')
+}
+```
+
+Then the same operation of *bedtools intersect* is performed.
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/window_count.sh
+```
+
+
+**Output:**
+
+- Window expression file:
+```{bash eval=FALSE}
+  # suffix "*.expression.window.txt"
+  $ ls *.expression.window.txt
+```
+
+- Windowed SNP intersected file:
+```{bash eval=FALSE}
+  # "*.counts.window.txt"
+  $ ls | grep .counts.window.txt | grep -v divergent | grep -v matched
+```
+
+## Calculate Odds ratio of derived allele frequency
+The same process is conducted as the above not windowed files.
+
+**Result:**
+
+```{r}
+load('C:/Users/lenovo/Desktop/Young lab/data/hg19.OR.window.Rdata')
+```
+```{r echo=F}
+result = result[-c(3,4),]
+
+kable(result[,1:5])
+kable(result[,c(1,seq(6,9,1))])
+```
+
+**Plot:**
+
+```{r echo=FALSE}
+idx = which(result$p.value<0.05)
+
+ggplot(result,aes(brain_region,odds_ratio,ymin=lower_conf,ymax=upper_conf,color=region))+
+  geom_pointrange(shape='|',size=0.8)+  #,color='black')+
+  geom_hline(yintercept = 1,linetype=2,color='lightblue')+
+  geom_vline(xintercept = 2.5,linetype=1,color='grey')+
+  annotate('text',x=idx-0.05,y=result$upper_conf[idx]+0.25,label='*')+
+  theme_classic()+
+  scale_y_continuous(breaks=seq(0,4,0.5))+
+  scale_color_manual(values=c('blue','black'))+
+  theme(legend.position = 'none')+
+  labs(x=NULL,y='Derived allele frequency\n odds ratio')+
+  coord_flip()
+```
+
+**Interpret:**
+
+The result showed that after expanding the upstream and downstream intersection, most brain regions (except **substantia nigra, medulla oblongata** and **globus pallidus**) become significantly larger than 1, indicating a conserved purifying selection among most brain regions.
+
+Since the window option returns more significant results, we continued with the windowed files.
+
+
+
+
+# V. Compare derived allele frequency between matched and divergent promoter
+To further observe the odds ratio change between conserved and aligned promoters, we separate the counts file into two subsets according to the promoter category (conserved vs aligned) and count the allele frequency separately. 
+
+**Code:**
+```{bash eval=FALSE}
+$ /exports/cmvm/datastore/sbms/groups/young-lab/yiru/code/subset.sh
+```
+
+```{bash eval=FALSE}
+# For example:
+$ awk '$19=="conserved" {print}' hg19.amygdala.counts.window.txt > 
+  hg19.amygdala.matched.counts.window.txt
+$ awk '$19=="aligned" {print}' hg19.amygdala.counts.window.txt > 
+  hg19.amygdala.divergent.counts.window.txt
+```
+
+Therefore, two subset counts files are generated.
+
+**Output:**
+```{bash eval=FALSE}
+$ ls *.divergent.counts.window.txt *.matched.counts.window.txt
+```
+
+## Calculate Odds ratio of derived allele frequency
+applying the same method of odds ratio calculation (region/genome). 
+
+**Result:**
+
+```{r}
+load('C:/Users/lenovo/Desktop/Young lab/data/hg19.OR.subsets.window.Rdata')
+```
+
+**Plot:**
+
+```{r echo=FALSE}
+result = result[-seq(5,8),]
+idxs = strsplit(as.character(result$brain_region),"\\.")
+result$promoter = sapply(idxs,function(x) x[2])
+result$Promoter = paste(result$region,result$promoter)
+
+ggplot(result,aes(brain_region,odds_ratio,ymin=lower_conf,ymax=upper_conf,color=Promoter))+ # ,color=region,type=promoter))+
+  geom_pointrange(shape='|',size=1)+  #,color='black')+
+  geom_hline(yintercept = 1,linetype=2,color='lightblue')+
+  geom_vline(xintercept = 4.5,linetype=1,color='grey')+
+  theme_classic()+
+  scale_y_continuous(breaks=c(seq(0,5,1),seq(10,25,5)))+
+  labs(x=NULL,y='Derived allele frequency\n odds ratio')+
+  coord_flip()
+```
+
+
+## Compare matched and divergent groups directly
+To compare the matched and divergent groups more clearly, we change the background to the divergent group and calculate the odds ratio of the two groups in each brain region directly.
+$$
+\begin{array}{|l|l|l|}
+\hline
+& Matched & Divergent \\ 
+\hline 
+rare & & \\
+\hline 
+common & & \\
+\hline
+\end{array}
+$$
+$$
+Odds.Ratio = \frac{rare.matched/common.matched}{rare.divergent/common.divergent}
+$$
+
+**Result:**
+
+```{r}
+load('C:/Users/lenovo/Desktop/Young lab/data/hg19.OR.matched_divergent.window.Rdata')
+```
+```{r echo=F}
+result = result[-c(3,4),]
+
+kable(result[,1:5])
+kable(result[,c(1,seq(6,10,1))])
+```
+
+**Plot:**
+
+```{r echo=FALSE}
+idx = which(result$p.value<0.05)
+
+ggplot(result,aes(brain_region,odds_ratio,ymin=lower_conf,ymax=upper_conf,color=region))+
+  geom_pointrange(shape='|')+  #,color='black')+
+  geom_hline(yintercept = 1,linetype=2,color='lightblue')+
+  geom_vline(xintercept = 2.5,linetype=1,color='grey')+
+  annotate('text',x=idx-0.05,y=result$upper_conf[idx]+1,label='*')+
+  theme_classic()+
+  scale_color_manual(values=c('blue','black'))+
+  scale_y_continuous(breaks=c(seq(0,5,1),seq(10,25,5)))+
+  labs(x=NULL,y='Derived allele frequency\n Matched/Divergent odds ratio')+
+  coord_flip()
+```
+
+**Interpret:**
+
+According to the result, the whole brain presented no significant difference in odds ratio, even at a smaller sample size. However, one brain regions, **amygdala**, showed significancy in odds ratio, indicating a more purifying selection in matched promoters than divergent promoters. But the significance could be resulted from the small sample size. Therefore, a larger sample size of promoters or more repeated samples are required.
+
+
+# Discussion
+
+While promoters in most brain regions showed significant purifying selection compared to overall promoters (higher odds ratio towards rare alleles), few present differences between conserved and divergent promoters, which means these pormoters are highly conserved even when the expressing region changed during evolution. However, there are still one brain region, the **amygdala**, that present significantly higher purifying selection in conserved promoters than divergent promoters. However, due to the relative small sample size of rare and common alleles, the result could also be optional. Therefore, a confirmation with more repeated brain samples may help.
+
+Meanwhile, since most brain regions undergo a purifying selection, the change of expression region of the divergent promoters may have undergone a change in their function, while the conserved ones keep their own function. It worth further research to see whether the conserved promoters are functionally important and whether the divergent promoters have loss their function or gain extra function.
+
+
+
